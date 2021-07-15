@@ -25,13 +25,19 @@ class Steinmetz(gym.Env):
 
         self.viewer = rendering.SimpleImageViewer()
 
+        self._actions_taken: int = 0
+
     def step(self, action: Action):
         assert self.action_space.contains(action.value)
 
         try:
             self.stimulus.move(action)
-            if self.stimulus.is_in_centre():
+            self._actions_taken += 1
+            if self.stimulus.is_in_centre() and self._actions_taken < 30:
                 reward = 1.0
+                done = True
+            elif self._actions_taken > 30:
+                reward = -1.0
                 done = True
             else:
                 reward = 0.0
@@ -45,21 +51,21 @@ class Steinmetz(gym.Env):
 
         return obs, reward, done, info
 
-    def reset(self):
+    def reset(self, stimulus: Optional[Stimulus] = None):
         """Reset the environment
 
         Sets the stimulus position to a random position
         """
-        self._stimulus = random.choice((Stimulus.left, Stimulus.right))()
+        self._stimulus = stimulus or random.choice((Stimulus.left, Stimulus.right))()
+        self._actions_taken = 0
 
-    def render(self, mode="rgb_array"):
+    def render(self, mode="rgb_array") -> np.ndarray:
         if mode is not "rgb_array":
             raise NotImplementedError("Only rgb_array is supported so far")
 
         im = Image.new('RGB', (Screen.WIDTH, Screen.HEIGHT), (255, 255, 255))
         draw = ImageDraw.Draw(im)
         draw.ellipse(self.stimulus.position, fill=self.stimulus.rgb)
-        im.save('foo.jpg', quality=95)
         render_data = np.array(im)
         self.viewer.imshow(render_data)
 

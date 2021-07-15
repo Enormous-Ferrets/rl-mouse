@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import torch
 import torch.nn.functional as F
 from torch import nn
 
@@ -31,3 +34,14 @@ class DQN(nn.Module):
         x = F.relu(self.bn2(self.conv2(x)))
         x = F.relu(self.bn3(self.conv3(x)))
         return self.head(x.view(x.size(0), -1))
+
+    def save(self, path: Path):
+        torch.save(self.state_dict(), path)
+
+    @classmethod
+    def from_weights(cls, path: Path, h, w, outputs, device) -> "DQN":
+        dqn = DQN(h, w, outputs, device)
+        weights = torch.load(path)
+        dqn.load_state_dict(weights)
+
+        return dqn
