@@ -30,3 +30,16 @@ def train(episodes: int, save: str):
     agent.train(num_episodes=episodes)
 
     agent.save(Path(save))
+
+@cli.command()
+@click.option("--version", required=True)
+@click.option("--sessions", "-s", required=True, type=int)
+@click.option("--model", required=False, default="v0.1")
+def generate(version: str, sessions: int, model: str):
+    print(f"Generating dataset {version}")
+    agent = AgentService.load(Path(f"models/{model}"))
+
+    dataset = agent.generate_data(sessions)
+    output = Path(".") / "datasets" / f"dataset-{version}.npy"
+    print(f"\n\tSaving dataset to {output}\n")
+    dataset.save(output)
