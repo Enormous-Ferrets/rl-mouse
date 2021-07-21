@@ -44,4 +44,7 @@ class DQN(nn.Module):
         weights = torch.load(path)
         dqn.load_state_dict(weights)
 
+        if torch.cuda.is_available():
+            dqn.cuda()
+
         return dqn

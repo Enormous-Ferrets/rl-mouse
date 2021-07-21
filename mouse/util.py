@@ -8,7 +8,7 @@ import torch
 import torchvision.transforms as T
 from PIL import Image
 
-from mouse.model import Transition
+from mouse.model.experiment import Transition
 
 is_ipython = 'inline' in matplotlib.get_backend()
 if is_ipython:

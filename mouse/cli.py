@@ -4,7 +4,7 @@ import click
 
 from mouse.agent.agent import Agent
 from mouse.environment.steinmetz import Steinmetz
-from mouse.model import Stimulus
+from mouse.model.experiment import Stimulus
 from mouse.service.agent_service import AgentService
 
 
@@ -16,13 +16,11 @@ def cli():
 @click.option("--path", required=True)
 @click.option("--direction", required=True)
 def infer(path: str, direction: str):
-    print(direction)
     agent = AgentService.load(Path(path))
     env = Steinmetz()
-    env.reset(stimulus=Stimulus.left())
-    agent.infer()
-    print(agent)
-    print(agent._policy_net)
+    env.reset(stimulus=Stimulus.from_direction(direction))
+    _input = agent.get_screen(env)
+    agent.infer(_input)
 
 @cli.command()
 @click.option("--episodes", "-e", required=True, type=int)

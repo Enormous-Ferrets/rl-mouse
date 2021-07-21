@@ -7,7 +7,7 @@ from gym import spaces
 from gym.envs.classic_control import rendering
 from PIL import Image, ImageDraw
 
-from mouse.model import Action, InvalidMove, Screen, Stimulus
+from mouse.model.experiment import Action, InvalidMove, Screen, Stimulus
 
 
 class Steinmetz(gym.Env):
@@ -34,13 +34,13 @@ class Steinmetz(gym.Env):
             self.stimulus.move(action)
             self._actions_taken += 1
             if self.stimulus.is_in_centre() and self._actions_taken < 30:
-                reward = 1.0
+                reward = 1.0  # TODO: Consider tweaking
                 done = True
             elif self._actions_taken > 30:
-                reward = -1.0
+                reward = -1.0  # TODO: Consider tweaking
                 done = True
             else:
-                reward = 0.0
+                reward = 0.0  # TODO: Consider tweaking
                 done = False
         except InvalidMove:
             reward = -1.0

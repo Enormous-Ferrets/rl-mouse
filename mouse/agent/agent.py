@@ -1,4 +1,3 @@
-
 import json
 import math
 import random
@@ -14,7 +13,8 @@ from torch.functional import Tensor
 
 from mouse.agent.network import DQN
 from mouse.environment.steinmetz import Steinmetz
-from mouse.model import Action, Transition
+from mouse.model.experiment import Action, Transition
+from mouse.model.trial import Dataset, Session, Trial
 from mouse.util import (ReplayMemory, plot_durations, plot_durations_final,
                         resize)
 
@@ -190,6 +190,79 @@ class Agent:
             )
         )
 
-    def infer(self, stimulus: str):
-        print(stimulus)
+    def infer(self, _input: Tensor) -> Action:
+        visualisation = {}
+        def hook(name: str):
+            def _hook(m, i, o):
+                visualisation[name] = o
 
+            return _hook
+
+        for name, layer in self._policy_net._modules.items():
+            print(f"Registering hook for {name}")
+            layer.register_forward_hook(hook(name))
+
+        policy = self._policy_net.forward(_input, record=True)
+        choice: Tensor = policy.max(1)[1].view(1, 1)
+        action = Action(choice[0][0].item())
+
+        return action
+
+
+    def generate_data(self, num_sessions: int) -> Dataset:
+        sessions = [self._generate_session() for _ in range(num_sessions)]
+
+        return Dataset(sessions=sessions)
+
+    def _generate_session(self) -> Session:
+        num_trials = 10
+        env = Steinmetz()
+        trials = [self._generate_trial(env) for _ in range(num_trials)]
+
+        spks = np.hstack([trial.measurements.copy() for trial in trials])
+        response = np.array([trial.response for trial in trials])
+
+        return Session(spks=np.array(spks), response=response)
+
+
+    def _choose_action(self, _input: Tensor) -> Action:
+        policy = self._policy_net.forward(_input)
+        choice: Tensor = policy.max(1)[1].view(1, 1)
+        action = Action(choice[0][0].item())
+
+        return action
+
+    def _generate_trial(self, env: Steinmetz) -> Trial:
+        activity_bins = []
+        env.reset()
+        side = env.stimulus.side
+        def hook(m, i, o):
+            neurons: np.ndarray = torch.flatten(o).cpu().detach().numpy()
+            neurons = neurons.reshape(neurons.shape[0], 1, 1)
+
+            activity_bins.append(neurons)
+
+        # Register hook
+        handle = self._policy_net._modules["conv3"].register_forward_hook(hook)
+
+        last_screen = self.get_screen(env)
+        current_screen = self.get_screen(env)
+        state: Tensor = current_screen - last_screen
+
+        for _ in count():
+            action = self._choose_action(state)
+            _, reward, done, _ = env.step(action)
+
+            last_screen = current_screen
+            current_screen = self.get_screen(env)
+            if not done:
+                state = current_screen - last_screen
+            else:
+                break
+
+        trial_data = np.dstack(activity_bins)
+        padded_trial = np.zeros((trial_data.shape[0], trial_data.shape[1], 30))
+        padded_trial[:trial_data.shape[0], :trial_data.shape[1], :trial_data.shape[2]] = trial_data
+        handle.remove()
+
+        return Trial(measurements=padded_trial, response=side.value)
