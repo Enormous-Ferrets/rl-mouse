@@ -1,22 +1,22 @@
-
+import json
 import math
 import random
 from itertools import count
-from typing import List
+from pathlib import Path
+from typing import List, Optional
 
-import gym
 import numpy as np
 import torch
 import torch.optim as optim
-import torchvision.transforms as T
-from PIL import Image
 from torch import nn
 from torch.functional import Tensor
 
 from mouse.agent.network import DQN
 from mouse.environment.steinmetz import Steinmetz
-from mouse.model import Action, Transition
-from mouse.util import ReplayMemory, plot_durations
+from mouse.model.experiment import Action, Transition
+from mouse.model.trial import Dataset, Session, Trial
+from mouse.util import (ReplayMemory, plot_durations, plot_durations_final,
+                        resize)
 
 BATCH_SIZE = 128
 GAMMA = 0.999
@@ -25,39 +25,34 @@ EPS_END = 0.05
 EPS_DECAY = 200
 TARGET_UPDATE = 10
 
-def get_cart_location(env, screen_width):
-    world_width = env.x_threshold * 2
-    scale = screen_width / world_width
-    return int(env.state[0] * scale + screen_width / 2.0)  # MIDDLE OF CART
-
-resize = T.Compose([T.ToPILImage(),
-                    T.Resize(40, interpolation=Image.CUBIC),
-                    T.ToTensor()])
 
 class Agent:
 
-    def __init__(self) -> None:
+    def __init__(self, policy_net: Optional[DQN] = None) -> None:
         self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        #  self._env = gym.make('CartPole-v0').unwrapped
-        self._env = Steinmetz()
-        self._env.reset()
 
-        self._steps_done = 0
-        self._memory = ReplayMemory(10000)
-        self._episode_durations: List[int] = []
+        if policy_net is None:
+            self._env = Steinmetz()
+            self._env.reset()
+            init_screen = self.get_screen(self._env)
+            _, _, self.screen_height, self.screen_width = init_screen.shape
+            self._n_actions = self._env.action_space.n
 
-        init_screen = self._get_screen()
-        _, _, screen_height, screen_width = init_screen.shape
-        print(f"Screen is {screen_width}x{screen_height}")
-        self._policy_net = DQN(screen_height, screen_width, self._n_actions, self._device).to(self._device)
-        self._target_net = DQN(screen_height, screen_width, self._n_actions, self._device).to(self._device)
-        self._optimizer = optim.RMSprop(self._policy_net.parameters())
+            self._steps_done = 0
+            self._memory = ReplayMemory(10000)
+            self._episode_durations: List[int] = []
+
+            self._policy_net = DQN(self.screen_height, self.screen_width, self._n_actions, self._device).to(self._device)
+            self._target_net = DQN(self.screen_height, self.screen_width, self._n_actions, self._device).to(self._device)
+            self._optimizer = optim.RMSprop(self._policy_net.parameters())
+        else:
+            self._policy_net = policy_net
 
     def train(self, num_episodes: int = 50):
         for i_episode in range(num_episodes):
             self._env.reset()
-            last_screen = self._get_screen()
-            current_screen = self._get_screen()
+            last_screen = self.get_screen(self._env)
+            current_screen = self.get_screen(self._env)
             state: Tensor = current_screen - last_screen
 
             for t in count():
@@ -67,7 +62,7 @@ class Agent:
 
                 # Observe new state
                 last_screen = current_screen
-                current_screen = self._get_screen()
+                current_screen = self.get_screen(self._env)
                 if not done:
                     next_state = current_screen - last_screen
                 else:
@@ -91,10 +86,8 @@ class Agent:
 
         self._env.render()
         self._env.close()
+        plot_durations_final(self._episode_durations)
 
-    @property
-    def _n_actions(self) -> int:
-        return self._env.action_space.n
 
     def _optimize_model(self):
         if len(self._memory) < BATCH_SIZE:
@@ -141,8 +134,9 @@ class Agent:
             param.grad.data.clamp_(-1, 1)
         self._optimizer.step()
 
-    def _get_screen(self):
-        screen = self._env.render(mode='rgb_array').transpose((2, 0, 1))
+    @staticmethod
+    def get_screen(env: Steinmetz):
+        screen = env.render(mode='rgb_array').transpose((2, 0, 1))
 
         screen = np.ascontiguousarray(screen, dtype=np.float32) / 255
         screen = torch.from_numpy(screen)
@@ -165,3 +159,110 @@ class Agent:
             n_actions = self._env.action_space.n
             return torch.tensor([[random.randrange(n_actions)]], device=self._device, dtype=torch.long)
 
+    def save(self, path: Path):
+        path.mkdir(parents=True, exist_ok=True)
+
+        self._policy_net.save(path / "model.pt")
+        meta = {
+            "screen_width": self.screen_width,
+            "screen_height": self.screen_height,
+            "action_space_size": self._n_actions
+        }
+
+        with (path / "meta.json").open("w+") as fp:
+            json.dump(meta, fp)
+
+        print(f"\n\tSaved model to {path}")
+
+    @classmethod
+    def from_weights(cls, path: Path) -> "Agent":
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        with (path / "meta.json").open() as fp:
+            meta = json.load(fp)
+
+        return cls(
+            policy_net=DQN.from_weights(
+                path / "model.pt",
+                meta["screen_height"],
+                meta["screen_width"],
+                meta["action_space_size"],
+                device
+            )
+        )
+
+    def infer(self, _input: Tensor) -> Action:
+        visualisation = {}
+        def hook(name: str):
+            def _hook(m, i, o):
+                visualisation[name] = o
+
+            return _hook
+
+        for name, layer in self._policy_net._modules.items():
+            print(f"Registering hook for {name}")
+            layer.register_forward_hook(hook(name))
+
+        policy = self._policy_net.forward(_input, record=True)
+        choice: Tensor = policy.max(1)[1].view(1, 1)
+        action = Action(choice[0][0].item())
+
+        return action
+
+
+    def generate_data(self, num_sessions: int) -> Dataset:
+        sessions = [self._generate_session() for _ in range(num_sessions)]
+
+        return Dataset(sessions=sessions)
+
+    def _generate_session(self) -> Session:
+        num_trials = 10
+        env = Steinmetz()
+        trials = [self._generate_trial(env) for _ in range(num_trials)]
+
+        spks = np.hstack([trial.measurements.copy() for trial in trials])
+        response = np.array([trial.response for trial in trials])
+
+        return Session(spks=np.array(spks), response=response)
+
+
+    def _choose_action(self, _input: Tensor) -> Action:
+        policy = self._policy_net.forward(_input)
+        choice: Tensor = policy.max(1)[1].view(1, 1)
+        action = Action(choice[0][0].item())
+
+        return action
+
+    def _generate_trial(self, env: Steinmetz) -> Trial:
+        activity_bins = []
+        env.reset()
+        side = env.stimulus.side
+        def hook(m, i, o):
+            neurons: np.ndarray = torch.flatten(o).cpu().detach().numpy()
+            neurons = neurons.reshape(neurons.shape[0], 1, 1)
+
+            activity_bins.append(neurons)
+
+        # Register hook
+        handle = self._policy_net._modules["conv3"].register_forward_hook(hook)
+
+        last_screen = self.get_screen(env)
+        current_screen = self.get_screen(env)
+        state: Tensor = current_screen - last_screen
+
+        for _ in count():
+            action = self._choose_action(state)
+            _, reward, done, _ = env.step(action)
+
+            last_screen = current_screen
+            current_screen = self.get_screen(env)
+            if not done:
+                state = current_screen - last_screen
+            else:
+                break
+
+        trial_data = np.dstack(activity_bins)
+        padded_trial = np.zeros((trial_data.shape[0], trial_data.shape[1], 30))
+        padded_trial[:trial_data.shape[0], :trial_data.shape[1], :trial_data.shape[2]] = trial_data
+        handle.remove()
+
+        return Trial(measurements=padded_trial, response=side.value)

@@ -1,7 +1,8 @@
+import random
 from collections import namedtuple
 from dataclasses import dataclass
 from enum import Enum
-from typing import Tuple
+from typing import Callable, Optional, Tuple
 
 #  @dataclass
 #  class Transition:
@@ -24,6 +25,11 @@ class Status(Enum):
 class Action(Enum):
     LEFT = 0
     RIGHT = 1
+
+
+class Side(Enum):
+    LEFT = 1
+    RIGHT = -1
 
 
 class Screen:
@@ -71,7 +77,6 @@ class Stimulus:
         centre_pos = Screen.WIDTH / 2
         stim_pos = self.x0 + (STIM_DIAMETER / 2)
         distance_from_centre = abs(centre_pos - stim_pos)
-        print(f"Distance from centre: {distance_from_centre}")
         return distance_from_centre <= 50
 
     @property
@@ -82,13 +87,26 @@ class Stimulus:
     def left(cls) -> "Stimulus":
         x0, y0 = START_POS_LEFT[0]
         x1, y1 = START_POS_LEFT[1]
-        return cls(x0, y0, x1, y1, 0.7)
+        contrast = random.uniform(0, 1)
+        return cls(x0, y0, x1, y1, contrast)
 
     @classmethod
     def right(cls) -> "Stimulus":
         x0, y0 = START_POS_RIGHT[0]
         x1, y1 = START_POS_RIGHT[1]
-        return cls(x0, y0, x1, y1, 0.7)
+        contrast = random.uniform(0, 1)
+        return cls(x0, y0, x1, y1, contrast)
+
+    @classmethod
+    def from_direction(cls, direction: str) -> "Stimulus":
+        if direction not in ["left", "right"]:
+            raise ValueError(f"Invalid direction {direction}")
+
+        constructor: Optional[Callable[[], Stimulus]] = getattr(cls, direction, None)
+        if not constructor:
+            raise RuntimeError(f"No constructor found for {direction} direction")
+
+        return constructor()
 
     @property
     def rgb(self) -> Tuple[int, int, int]:
@@ -101,4 +119,14 @@ class Stimulus:
             int(self.x0 + (STIM_DIAMETER/2)),
             int(self.y0 + (STIM_DIAMETER/2))
         )
+
+    @property
+    def side(self) -> Side:
+        if ((self.x0, self.y0), (self.x1, self.y1)) == START_POS_LEFT:
+            return Side.LEFT
+        elif ((self.x0, self.y0), (self.x1, self.y1)) == START_POS_RIGHT:
+            return Side.RIGHT
+        else:
+            raise RuntimeError("Stimulus is not in the starting position")
+
 

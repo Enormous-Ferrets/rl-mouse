@@ -4,11 +4,16 @@ version = "0.0.1"
 description = ""
 authors = ["Rory Byrne <rory@rory.bio>"]
 
+[tool.poetry.scripts]
+mouse = "mouse.cli:cli"
+
 [tool.poetry.dependencies]
 python = "^3.9"
 gym = "^0.18.3"
 matplotlib = "^3.4.2"
 Pillow = "^8.2.0"
+click = "^8.0.1"
+pydantic = "^1.8.2"
 
 [tool.poetry.dev-dependencies]
 pytest = "^6.2.4"
